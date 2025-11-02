@@ -2,6 +2,14 @@
 
 A unified Prometheus metrics exporter for Steam and Old School RuneScape (OSRS) game statistics.
 
+## About
+
+This project combines features from two existing exporters:
+- **[steam-exporter](https://github.com/mitchtech/steam-exporter)** - Steam game statistics exporter
+- **[osrs-prometheus-exporter](https://woodpecker.boerlage.me/daan/osrs-prometheus-exporter)** - Old School RuneScape statistics exporter
+
+This unified exporter was created primarily with AI assistance to consolidate functionality, improve caching strategies, and provide a more streamlined experience for monitoring both Steam and OSRS game statistics.
+
 ## Features
 
 - **Steam Integration**: Tracks owned games, playtime, and achievements
