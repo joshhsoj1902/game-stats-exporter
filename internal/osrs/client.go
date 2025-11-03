@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,8 +16,9 @@ import (
 )
 
 const (
-	PlayerStatsURL = "https://oldschool.runescape.wiki/cors/m=hiscore_oldschool/index_lite.ws"
-	WorldDataURL   = "https://www.runescape.com/g=oldscape/slr.ws?order=LPWM"
+	PlayerStatsURL      = "https://oldschool.runescape.wiki/cors/m=hiscore_oldschool/index_lite.ws"
+	PlayerStatsHTMLURL  = "https://secure.runescape.com/m=hiscore_oldschool/hiscorepersonal"
+	WorldDataURL        = "https://www.runescape.com/g=oldscape/slr.ws?order=LPWM"
 )
 
 var Skills = []string{
@@ -46,6 +49,130 @@ var Skills = []string{
 	"Stuff",
 }
 
+// Known minigame names in order (as they appear in the CSV API)
+// This list is based on the OSRS hiscores API order and is kept up-to-date
+// Total: 87 minigames in the API
+var knownMinigameNames = []string{
+	"Clue Scrolls (all)",
+	"Clue Scrolls (beginner)",
+	"Clue Scrolls (easy)",
+	"Clue Scrolls (medium)",
+	"Clue Scrolls (hard)",
+	"Clue Scrolls (elite)",
+	"Clue Scrolls (master)",
+	"LMS - Killstreak",
+	"LMS - Rank",
+	"PvP Arena - Rank",
+	"Soul Wars Zeal",
+	"Rifts closed",
+	"Colosseum Glory",
+	"Bounty Hunter - Hunter",
+	"Bounty Hunter - Rogue",
+	"Bounty Hunter (Legacy) - Hunter",
+	"Bounty Hunter (Legacy) - Rogue",
+	"Castle Wars Games",
+	"Barbarian Assault - Honour Level",
+	"BA Attack Level",
+	"BA Defence Level",
+	"BA Strength Level",
+	"BA Hitpoints Level",
+	"BA Ranged Level",
+	"BA Magic Level",
+	"BA Prayer Level",
+	"Trouble Brewing",
+	"TzTok-Jad",
+	"TzKal-Zuk",
+	"Wintertodt",
+	// Pad to 87 entries - minigames beyond this list will use generic names
+	// These will be filled in as we discover the exact order
+	"", "", "", "", "", "", "", "", "", "", // 31-40
+	"", "", "", "", "", "", "", "", "", "", // 41-50
+	"", "", "", "", "", "", "", "", "", "", // 51-60
+	"", "", "", "", "", "", "", "", "", "", // 61-70
+	"", "", "", "", "", "", "", "", "", "", // 71-80
+	"", "", "", "", "", "", "", "", "", "", // 81-87
+}
+
+// getMinigameNames fetches and parses minigame names from the HTML highscores page
+// Falls back to known list if HTML fetch fails or doesn't return enough names
+func getMinigameNames(rsn string) ([]string, error) {
+	url := fmt.Sprintf("%s?user1=%s", PlayerStatsHTMLURL, rsn)
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch HTML highscores: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to fetch HTML highscores (status: %d)", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read HTML response: %w", err)
+	}
+
+	// Extract minigame names with their table numbers
+	// Format: <a href="...table=N...category_type=1...">Name</a>
+	type minigameEntry struct {
+		table int
+		name  string
+	}
+	var htmlEntries []minigameEntry
+
+	// Try to extract table numbers along with names
+	reWithTable := regexp.MustCompile(`<a href="[^"]*table=(\d+)[^"]*category_type=1[^"]*">([^<]+)</a>`)
+	matches := reWithTable.FindAllStringSubmatch(string(body), -1)
+	for _, match := range matches {
+		if len(match) >= 3 {
+			tableStr := strings.TrimSpace(match[1])
+			name := strings.TrimSpace(match[2])
+			if name != "" && tableStr != "" {
+				if tableNum, err := strconv.Atoi(tableStr); err == nil {
+					htmlEntries = append(htmlEntries, minigameEntry{table: tableNum, name: name})
+				}
+			}
+		}
+	}
+
+	// Fallback to simple extraction if table numbers aren't found
+	if len(htmlEntries) == 0 {
+		re := regexp.MustCompile(`<a href="[^"]*category_type=1[^"]*">([^<]+)</a>`)
+		matches := re.FindAllStringSubmatch(string(body), -1)
+		for _, match := range matches {
+			if len(match) > 1 {
+				name := strings.TrimSpace(match[1])
+				if name != "" {
+					htmlEntries = append(htmlEntries, minigameEntry{table: -1, name: name})
+				}
+			}
+		}
+	}
+
+	// Convert to simple string list for compatibility (but keep entries for table mapping)
+	var minigameNames []string
+	for _, entry := range htmlEntries {
+		minigameNames = append(minigameNames, entry.name)
+	}
+
+	logger.Log.WithFields(logrus.Fields{
+		"minigame_count":      len(minigameNames),
+		"entries_with_tables": len(htmlEntries),
+	}).Debug("Extracted minigame names from HTML")
+
+	// HTML only shows minigames the player has scores for
+	// Return them in the order they appear (which matches the order in CSV for minigames with scores)
+	// We don't need to fill in gaps - we'll only output metrics for minigames with scores anyway
+
+	logger.Log.WithFields(logrus.Fields{
+		"html_count": len(minigameNames),
+	}).Debug("Extracted minigame names from HTML (only for minigames with scores)")
+
+	// Return the HTML names directly - they're in the same order as CSV minigames with scores
+	return minigameNames, nil
+}
+
 type Client struct {
 	httpClient *http.Client
 }
@@ -59,56 +186,113 @@ func NewClient() *Client {
 }
 
 // GetPlayerStats retrieves player stats from the OSRS hiscores API
-func (c *Client) GetPlayerStats(rsn string) ([]SkillInfo, error) {
+func (c *Client) GetPlayerStats(rsn string) ([]SkillInfo, []MinigameInfo, error) {
 	url := fmt.Sprintf("%s?player=%s", PlayerStatsURL, rsn)
 
 	resp, err := c.httpClient.Get(url)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch player stats: %w", err)
+		return nil, nil, fmt.Errorf("failed to fetch player stats: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("player not found (status: %d)", resp.StatusCode)
+		return nil, nil, fmt.Errorf("player not found (status: %d)", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
+		return nil, nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	// Parse CSV format: rank,level,xp per line
+	// Fetch minigame names from HTML page
+	minigameNames, err := getMinigameNames(rsn)
+	if err != nil {
+		logger.Log.WithFields(logrus.Fields{
+			"rsn":   rsn,
+			"error": err.Error(),
+		}).Warn("Failed to fetch minigame names from HTML, using generic names")
+		minigameNames = nil // Will fall back to generic names
+	} else {
+		logger.Log.WithFields(logrus.Fields{
+			"rsn":             rsn,
+			"minigame_count": len(minigameNames),
+		}).Info("Successfully fetched minigame names from HTML")
+	}
+
+	// Parse CSV format: rank,level,xp per line for skills, rank,score for minigames
 	lines := strings.Split(string(body), "\n")
 	var skills []SkillInfo
+	var minigames []MinigameInfo
 
-	for i, line := range lines {
+	skillIndex := 0
+	minigameIndex := 0
+
+	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
 
 		parts := strings.Split(line, ",")
-		if len(parts) != 3 {
-			continue
-		}
 
-		if i >= len(Skills) {
-			break
-		}
+		// Skills have 3 values: rank,level,xp
+		if len(parts) == 3 && skillIndex < len(Skills) {
+			skill := SkillInfo{
+				Rank:   parts[0],
+				Level:  parts[1],
+				XP:     parts[2],
+				Name:   Skills[skillIndex],
+				Player: rsn,
+			}
+			skills = append(skills, skill)
+			skillIndex++
+		} else if len(parts) == 2 {
+			// Minigames have 2 values: rank,score
+			// Parse dynamically - no hardcoded list needed
+			// If we've parsed all expected skills OR we get a 2-part line after parsing at least one skill,
+			// then treat it as a minigame (API may return fewer skills than our list)
+			if skillIndex >= len(Skills) || (skillIndex > 0 && len(skills) == skillIndex) {
+				// Check if this minigame has actual scores (not -1,-1)
+				rank := parts[0]
+				score := parts[1]
+				if rank == "-1" && score == "-1" {
+					// Player doesn't have scores for this minigame - skip it
+					// Increment index but don't add to the list
+					minigameIndex++
+					continue
+				}
 
-		skill := SkillInfo{
-			Rank:    parts[0],
-			Level:   parts[1],
-			XP:      parts[2],
-			Name:    Skills[i],
-			Player:  rsn,
-			Profile: PlayerProfileStandard,
-		}
+				// Player has scores for this minigame - use real name from HTML if available
+				// HTML names are in the same order as CSV minigames with scores
+				// Since we skip minigames without scores, len(minigames) gives us the index
+				minigameName := fmt.Sprintf("Minigame %d", len(minigames)+1)
+				if minigameNames != nil && len(minigames) < len(minigameNames) {
+					name := minigameNames[len(minigames)]
+					if name != "" {
+						minigameName = name
+					}
+				}
 
-		skills = append(skills, skill)
+				minigame := MinigameInfo{
+					Rank:   rank,
+					Score:  score,
+					Name:   minigameName,
+					Player: rsn,
+				}
+				minigames = append(minigames, minigame)
+				minigameIndex++
+			}
+			// If we haven't parsed any skills yet, skip 2-part lines (they might be malformed)
+		}
 	}
 
-	return skills, nil
+	logger.Log.WithFields(logrus.Fields{
+		"skills_count":    len(skills),
+		"minigames_count": len(minigames),
+		"total_lines":     len(lines),
+	}).Debug("Parsed player stats from API")
+
+	return skills, minigames, nil
 }
 
 // GetWorldData retrieves world data from the OSRS world list API

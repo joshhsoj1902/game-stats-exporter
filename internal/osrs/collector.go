@@ -32,15 +32,18 @@ func (c *Collector) CollectPlayerStats(rsn string, mode string) error {
 
 	// Check cache first
 	var stats []SkillInfo
+	var minigames []MinigameInfo
 	cacheKey := fmt.Sprintf("osrs:player_stats:%s", rsn)
 	if cachedData, exists := c.cache.Get(cacheKey); exists {
 		type cacheEntry struct {
-			Stats      []SkillInfo `json:"stats"`
-			LastUpdate time.Time   `json:"last_update"`
+			Stats     []SkillInfo    `json:"stats"`
+			Minigames []MinigameInfo `json:"minigames"`
+			LastUpdate time.Time     `json:"last_update"`
 		}
 		var entry cacheEntry
 		if err := json.Unmarshal(cachedData, &entry); err == nil {
 			stats = entry.Stats
+			minigames = entry.Minigames
 			logger.Log.WithFields(logrus.Fields{
 				"rsn":   rsn,
 				"cache": "hit",
@@ -50,6 +53,7 @@ func (c *Collector) CollectPlayerStats(rsn string, mode string) error {
 				"rsn": rsn,
 			}).Warn("Cache hit but failed to unmarshal, fetching fresh")
 			stats = nil
+			minigames = nil
 		}
 	}
 
@@ -60,7 +64,7 @@ func (c *Collector) CollectPlayerStats(rsn string, mode string) error {
 			"cache": "miss",
 		}).Info("Fetching player stats from API")
 
-		freshStats, err := c.client.GetPlayerStats(rsn)
+		freshStats, freshMinigames, err := c.client.GetPlayerStats(rsn)
 		if err != nil {
 			logger.Log.WithFields(logrus.Fields{
 				"rsn":   rsn,
@@ -69,14 +73,17 @@ func (c *Collector) CollectPlayerStats(rsn string, mode string) error {
 			return fmt.Errorf("failed to get player stats: %w", err)
 		}
 		stats = freshStats
+		minigames = freshMinigames
 
 		// Cache with default TTL (15 minutes)
 		type cacheEntry struct {
-			Stats      []SkillInfo `json:"stats"`
-			LastUpdate time.Time   `json:"last_update"`
+			Stats     []SkillInfo    `json:"stats"`
+			Minigames []MinigameInfo `json:"minigames"`
+			LastUpdate time.Time     `json:"last_update"`
 		}
 		entry := cacheEntry{
-			Stats:      stats,
+			Stats:     stats,
+			Minigames: minigames,
 			LastUpdate: time.Now(),
 		}
 		if data, err := json.Marshal(entry); err == nil {
@@ -93,10 +100,12 @@ func (c *Collector) CollectPlayerStats(rsn string, mode string) error {
 
 	// Report metrics - this will reset player metrics
 	ReportPlayerStats(stats, mode)
+	ReportMinigames(minigames, mode)
 
 	logger.Log.WithFields(logrus.Fields{
-		"rsn":         rsn,
-		"skills_count": len(stats),
+		"rsn":           rsn,
+		"skills_count":  len(stats),
+		"minigames_count": len(minigames),
 	}).Info("Completed OSRS player stats collection")
 
 	return nil
@@ -160,7 +169,7 @@ func (c *Collector) CollectWorldData() error {
 // IsActive detects if a player is actively playing by checking XP increases
 func (c *Collector) IsActive(rsn string) (bool, error) {
 	// Get current stats
-	stats, err := c.client.GetPlayerStats(rsn)
+	stats, _, err := c.client.GetPlayerStats(rsn)
 	if err != nil {
 		return false, err
 	}

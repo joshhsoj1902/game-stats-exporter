@@ -12,21 +12,21 @@ var (
 		Subsystem: "player",
 		Name:      "level",
 		Help:      "Player skill level",
-	}, []string{"skill", "player", "profile", "mode"})
+	}, []string{"skill", "player", "mode"})
 
 	playerXPGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "osrs",
 		Subsystem: "player",
 		Name:      "xp",
 		Help:      "Player experience points",
-	}, []string{"skill", "player", "profile", "mode"})
+	}, []string{"skill", "player", "mode"})
 
 	playerRankGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "osrs",
 		Subsystem: "player",
 		Name:      "rank",
 		Help:      "Player highscores rank",
-	}, []string{"skill", "player", "profile", "mode"})
+	}, []string{"skill", "player", "mode"})
 
 	worldPlayersGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "osrs",
@@ -34,6 +34,20 @@ var (
 		Name:      "players",
 		Help:      "Number of players in a world",
 	}, []string{"id", "location", "isMembers", "type"})
+
+	minigameRankGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "osrs",
+		Subsystem: "minigame",
+		Name:      "rank",
+		Help:      "Player minigame highscores rank",
+	}, []string{"minigame", "player", "mode"})
+
+	minigameScoreGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "osrs",
+		Subsystem: "minigame",
+		Name:      "score",
+		Help:      "Player minigame score",
+	}, []string{"minigame", "player", "mode"})
 )
 
 func init() {
@@ -41,6 +55,8 @@ func init() {
 	prometheus.MustRegister(playerXPGauge)
 	prometheus.MustRegister(playerRankGauge)
 	prometheus.MustRegister(worldPlayersGauge)
+	prometheus.MustRegister(minigameRankGauge)
+	prometheus.MustRegister(minigameScoreGauge)
 }
 
 // resetWorldMetrics (lowercase) is the actual implementation
@@ -53,6 +69,8 @@ func resetPlayerMetrics() {
 	playerLevelGauge.Reset()
 	playerXPGauge.Reset()
 	playerRankGauge.Reset()
+	minigameRankGauge.Reset()
+	minigameScoreGauge.Reset()
 }
 
 // ResetPlayerMetrics resets all player metrics (removes all labels)
@@ -74,26 +92,23 @@ func ReportPlayerStats(stats []SkillInfo, mode string) {
 		rank := float64(rankInt)
 
 		playerLevelGauge.With(prometheus.Labels{
-			"skill":   stat.Name,
-			"player":  stat.Player,
-			"profile": string(stat.Profile),
-			"mode":    mode,
+			"skill":  stat.Name,
+			"player": stat.Player,
+			"mode":   mode,
 		}).Set(level)
 
 		playerXPGauge.With(prometheus.Labels{
-			"skill":   stat.Name,
-			"player":  stat.Player,
-			"profile": string(stat.Profile),
-			"mode":    mode,
+			"skill":  stat.Name,
+			"player": stat.Player,
+			"mode":   mode,
 		}).Set(xp)
 
 		// Only report rank if it's valid (not -1, which means unranked)
 		if rankInt >= 0 {
 			playerRankGauge.With(prometheus.Labels{
-				"skill":   stat.Name,
-				"player":  stat.Player,
-				"profile": string(stat.Profile),
-				"mode":    mode,
+				"skill":  stat.Name,
+				"player": stat.Player,
+				"mode":   mode,
 			}).Set(rank)
 		}
 	}
@@ -103,6 +118,34 @@ func ReportPlayerStats(stats []SkillInfo, mode string) {
 // This is the public API, the actual implementation is resetWorldMetrics
 func ResetWorldMetrics() {
 	resetWorldMetrics()
+}
+
+// ReportMinigames reports minigame metrics (rank and score)
+func ReportMinigames(minigames []MinigameInfo, mode string) {
+	for _, minigame := range minigames {
+		// Parse rank as integer to avoid scientific notation
+		rankInt, _ := strconv.ParseInt(minigame.Rank, 10, 64)
+		// Parse score as integer (minigames only increase)
+		scoreInt, _ := strconv.ParseInt(minigame.Score, 10, 64)
+
+		// Only report rank if it's valid (not -1, which means unranked)
+		if rankInt >= 0 {
+			minigameRankGauge.With(prometheus.Labels{
+				"minigame": minigame.Name,
+				"player":   minigame.Player,
+				"mode":     mode,
+			}).Set(float64(rankInt))
+		}
+
+		// Only report score if it's valid (not -1, which means unranked/not played)
+		if scoreInt >= 0 {
+			minigameScoreGauge.With(prometheus.Labels{
+				"minigame": minigame.Name,
+				"player":   minigame.Player,
+				"mode":     mode,
+			}).Set(float64(scoreInt))
+		}
+	}
 }
 
 // ReportWorldData reports world player count metrics

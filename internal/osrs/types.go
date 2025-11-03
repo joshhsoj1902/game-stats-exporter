@@ -1,18 +1,18 @@
 package osrs
 
-type PlayerProfile string
-
-const (
-	PlayerProfileStandard PlayerProfile = "Standard"
-)
-
 type SkillInfo struct {
-	Rank    string        `json:"rank"`
-	Level   string        `json:"level"`
-	XP      string        `json:"xp"`
-	Name    string        `json:"name"`
-	Player  string        `json:"player"`
-	Profile PlayerProfile `json:"profile"`
+	Rank   string `json:"rank"`
+	Level  string `json:"level"`
+	XP     string `json:"xp"`
+	Name   string `json:"name"`
+	Player string `json:"player"`
+}
+
+type MinigameInfo struct {
+	Rank   string `json:"rank"`
+	Score  string `json:"score"`
+	Name   string `json:"name"`
+	Player string `json:"player"`
 }
 
 type WorldLocation string
