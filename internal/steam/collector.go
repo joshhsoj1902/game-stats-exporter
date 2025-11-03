@@ -46,15 +46,42 @@ func (c *Collector) Collect(steamId string) error {
 		}).Debug("Retrieved username for Steam user")
 	}
 
-	// Get owned games (from cache or API)
-	ownedGamesResp, err := c.getOwnedGames(steamId)
-	if err != nil {
-		logger.Log.WithFields(logrus.Fields{
-			"steam_id": steamId,
-			"error":    err.Error(),
-		}).Error("Failed to get owned games")
-		return fmt.Errorf("failed to get owned games: %w", err)
-	}
+    // Get owned games (from cache or API)
+    ownedGamesResp, err := c.getOwnedGames(steamId)
+    if err != nil {
+        // If rate limited, attempt to serve from cache instead of failing
+        if strings.Contains(strings.ToLower(err.Error()), "rate limited") {
+            cacheKey := fmt.Sprintf("steam:owned_games:%s", steamId)
+            if cachedData, exists := c.cache.Get(cacheKey); exists {
+                var cachedResp OwnedGamesResponse
+                if uerr := json.Unmarshal(cachedData, &cachedResp); uerr == nil && len(cachedResp.Games) > 0 {
+                    logger.Log.WithFields(logrus.Fields{
+                        "steam_id": steamId,
+                        "game_count": len(cachedResp.Games),
+                    }).Warn("Rate limited: using cached owned games to serve metrics")
+                    ownedGamesResp = cachedResp
+                } else {
+                    logger.Log.WithFields(logrus.Fields{
+                        "steam_id": steamId,
+                        "error":    err.Error(),
+                    }).Error("Rate limited and no cached owned games available")
+                    return fmt.Errorf("failed to get owned games: %w", err)
+                }
+            } else {
+                logger.Log.WithFields(logrus.Fields{
+                    "steam_id": steamId,
+                    "error":    err.Error(),
+                }).Error("Rate limited and owned games cache miss")
+                return fmt.Errorf("failed to get owned games: %w", err)
+            }
+        } else {
+            logger.Log.WithFields(logrus.Fields{
+                "steam_id": steamId,
+                "error":    err.Error(),
+            }).Error("Failed to get owned games")
+            return fmt.Errorf("failed to get owned games: %w", err)
+        }
+    }
 
 	logger.Log.WithFields(logrus.Fields{
 		"steam_id":   steamId,
@@ -66,13 +93,13 @@ func (c *Collector) Collect(steamId string) error {
 		ReportOwnedGame(game, steamId, username)
 
 		// Check if we're rate limited before continuing
-		if c.rateLimit != nil && c.rateLimit.CheckAndBlock() {
-			logger.Log.WithFields(logrus.Fields{
-				"steam_id": steamId,
-				"blocked_until": c.rateLimit.BlockedUntil,
-			}).Error("Steam API rate limited - stopping collection early to avoid permanent ban")
-			return fmt.Errorf("steam API rate limited - backoff period active until %v", c.rateLimit.BlockedUntil)
-		}
+        if c.rateLimit != nil && c.rateLimit.CheckAndBlock() {
+            logger.Log.WithFields(logrus.Fields{
+                "steam_id": steamId,
+                "blocked_until": c.rateLimit.BlockedUntil,
+            }).Warn("Steam API rate limited - continuing with cached achievements only")
+            // Fall through to attempt using cached achievements below
+        }
 
 		// Skip achievement fetching for games with zero playtime
 		if game.PlaytimeForever == 0 {
@@ -85,18 +112,9 @@ func (c *Collector) Collect(steamId string) error {
 		}
 
 		// Get and report achievements
-		err := c.collectAchievements(steamId, game, username)
+        err := c.collectAchievements(steamId, game, username)
 		if err != nil {
-			// Check if this is a rate limit error - if so, stop processing completely
-			if err.Error() == "steam API rate limited - backoff period active" || 
-			   strings.Contains(err.Error(), "steam API rate limited") {
-				logger.Log.WithFields(logrus.Fields{
-					"steam_id": steamId,
-					"error":    err.Error(),
-				}).Error("Steam API rate limited during achievement collection - stopping immediately")
-				return err
-			}
-			// Log other errors but continue with other games
+            // On rate limit, we already attempted cache inside collectAchievements; just continue
 			logger.Log.WithFields(logrus.Fields{
 				"steam_id": steamId,
 				"game":     game.Name,
@@ -219,7 +237,7 @@ func (c *Collector) collectAchievements(steamId string, game OwnedGame, username
 		globalResp, err := c.client.GetGlobalAchievementPercentages(game.AppId)
 		if err != nil {
 			// Check if this is a rate limit error - if so, return early and let the rate limiter handle it
-			if err.Error() == "steam API rate limited - backoff period active" || 
+			if err.Error() == "steam API rate limited - backoff period active" ||
 			   err.Error() == "forbidden (403) - Steam API rate limit detected, backing off" {
 				return fmt.Errorf("steam API rate limited: %w", err)
 			}
@@ -263,17 +281,41 @@ func (c *Collector) collectAchievements(steamId string, game OwnedGame, username
 		}
 	}
 
-	// If we don't have cached user achievements, fetch them
-	if userAchievements == nil {
+    // If we don't have cached user achievements, fetch them
+    if userAchievements == nil {
 		// Add a small delay between achievement requests to avoid rate limiting
 		time.Sleep(5 * time.Second)
 
 		// Fetch user achievements
 		achievementResp, err := c.client.GetUserStatsForGame(steamId, game.AppId)
-		if err != nil {
-			return fmt.Errorf("error fetching user achievements: %w", err)
-		}
-		userAchievements = achievementResp.PlayerStats.Achievements
+        if err != nil {
+            // If rate limited, try to serve from cache instead of failing
+            if strings.Contains(strings.ToLower(err.Error()), "rate limited") {
+                if cachedData, exists := c.cache.Get(userCacheKey); exists {
+                    type cacheEntry struct {
+                        UserAchievements []Achievement `json:"user_achievements"`
+                        Playtime        int           `json:"playtime"`
+                    }
+                    var entry cacheEntry
+                    if uerr := json.Unmarshal(cachedData, &entry); uerr == nil && len(entry.UserAchievements) > 0 {
+                        userAchievements = entry.UserAchievements
+                        logger.Log.WithFields(logrus.Fields{
+                            "steam_id": steamId,
+                            "app_id":   game.AppId,
+                        }).Warn("Rate limited: using cached user achievements to serve metrics")
+                    } else {
+                        return fmt.Errorf("error fetching user achievements: %w", err)
+                    }
+                } else {
+                    return fmt.Errorf("error fetching user achievements: %w", err)
+                }
+            } else {
+                return fmt.Errorf("error fetching user achievements: %w", err)
+            }
+        }
+        if userAchievements == nil {
+            userAchievements = achievementResp.PlayerStats.Achievements
+        }
 
 		// Cache user achievements with different TTLs based on activity
 		type cacheEntry struct {

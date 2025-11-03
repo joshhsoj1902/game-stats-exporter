@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/joshhsoj1902/game-stats-exporter/internal/logger"
+	"strings"
 	"github.com/sirupsen/logrus"
 )
 
@@ -70,6 +71,17 @@ func (h *Handlers) HandleSteamMetrics(w http.ResponseWriter, r *http.Request) {
 	logger.Log.WithField("steam_id", steamId).Info("Collecting Steam metrics")
 	err := h.steamCollector.Collect(steamId)
 	if err != nil {
+		// If rate limited, serve whatever metrics are already present (from cache)
+		if strings.Contains(strings.ToLower(err.Error()), "rate limited") {
+			logger.Log.WithFields(logrus.Fields{
+				"steam_id": steamId,
+				"error":    err.Error(),
+				"duration": time.Since(start),
+			}).Warn("Rate limited by Steam - serving cached/last reported metrics only")
+			SteamHandler().ServeHTTP(w, r)
+			return
+		}
+
 		logger.Log.WithFields(logrus.Fields{
 			"steam_id": steamId,
 			"error":    err.Error(),

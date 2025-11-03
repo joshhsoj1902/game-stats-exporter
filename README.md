@@ -14,7 +14,7 @@ This unified exporter was created primarily with AI assistance to consolidate fu
 
 - **Steam Integration**: Tracks owned games, playtime, and achievements
 - **OSRS Integration**: Tracks player skill levels, XP, ranks, and world player counts
-- **Dynamic Endpoints**: Metrics available at `/metrics/steam/{steam_id}` and `/metrics/osrs/{rsn}`
+- **Dynamic Endpoints**: Metrics available at `/metrics/steam/{steam_id}` and `/metrics/osrs/{mode}/{playerid}`
 - **Redis Caching**: Aggressive caching to minimize API rate limit issues
 - **Intelligent Polling**: Adaptive polling intervals based on player activity
 
@@ -33,7 +33,7 @@ docker-compose up -d
 3. Access the exporter:
 - Root page: http://localhost:8000
 - Steam metrics: http://localhost:8000/metrics/steam/{steam_id}
-- OSRS player metrics: http://localhost:8000/metrics/osrs/{rsn}
+- OSRS player metrics: http://localhost:8000/metrics/osrs/vanilla/{playerid}
 - OSRS world metrics: http://localhost:8000/metrics/osrs/worlds
 
 ## Configuration
@@ -66,16 +66,16 @@ Example Prometheus scrape config:
 
 ```yaml
 scrape_configs:
-  - job_name: steam-josh
+  - job_name: steam-user
     scrape_interval: 5m
-    metrics_path: /metrics/steam/76561197987123908
+    metrics_path: /metrics/steam/YOUR_STEAM_ID
     static_configs:
       - targets:
           - localhost:8000
 
-  - job_name: osrs-josh
+  - job_name: osrs-player
     scrape_interval: 15m
-    metrics_path: /metrics/osrs/joshhsoj1902
+    metrics_path: /metrics/osrs/vanilla/YOUR_RSN
     static_configs:
       - targets:
           - localhost:8000

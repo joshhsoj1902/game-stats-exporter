@@ -164,7 +164,7 @@ func (c *Client) GetOwnedGames(steamId string) (OwnedGamesResponse, error) {
 			"steam_id": steamId,
 			"error":    err.Error(),
 		}).Error("Invalid Steam ID format - must be numeric")
-		return OwnedGamesResponse{}, fmt.Errorf("invalid Steam ID format: '%s' - Steam IDs must be numeric (e.g., 76561197987123908). You may have used a username instead", steamId)
+		return OwnedGamesResponse{}, fmt.Errorf("invalid Steam ID format: '%s' - Steam IDs must be numeric (e.g., 76561198000000000). You may have used a username instead", steamId)
 	}
 
 	if c.apiKey == "" {
