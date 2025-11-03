@@ -88,18 +88,24 @@ func (c *Collector) Collect(steamId string) error {
 		"game_count": len(ownedGamesResp.Games),
 	}).Info("Processing owned games")
 
+	// Check if we're rate limited at the start - if so, we'll use cache-only mode
+	isRateLimited := c.rateLimit != nil && c.rateLimit.CheckAndBlock()
+
 	// Report playtime for all games
 	for _, game := range ownedGamesResp.Games {
 		ReportOwnedGame(game, steamId, username)
 
-		// Check if we're rate limited before continuing
-        if c.rateLimit != nil && c.rateLimit.CheckAndBlock() {
-            logger.Log.WithFields(logrus.Fields{
-                "steam_id": steamId,
-                "blocked_until": c.rateLimit.BlockedUntil,
-            }).Warn("Steam API rate limited - continuing with cached achievements only")
-            // Fall through to attempt using cached achievements below
-        }
+		// If rate limited, skip achievement collection entirely (will use cache in collectAchievements if available)
+		if isRateLimited {
+			logger.Log.WithFields(logrus.Fields{
+				"steam_id": steamId,
+				"game":     game.Name,
+				"app_id":   game.AppId,
+			}).Debug("Rate limited - skipping achievement collection, will use cache if available")
+			// Still try to collect achievements (will use cache only)
+			_ = c.collectAchievements(steamId, game, username)
+			continue
+		}
 
 		// Skip achievement fetching for games with zero playtime
 		if game.PlaytimeForever == 0 {
@@ -283,8 +289,11 @@ func (c *Collector) collectAchievements(steamId string, game OwnedGame, username
 
     // If we don't have cached user achievements, fetch them
     if userAchievements == nil {
-		// Add a small delay between achievement requests to avoid rate limiting
-		time.Sleep(5 * time.Second)
+		// Only sleep if we're not rate limited (sleep is to avoid rate limiting, but if we're already rate limited, we won't make the call anyway)
+		if c.rateLimit == nil || !c.rateLimit.CheckAndBlock() {
+			// Add a small delay between achievement requests to avoid rate limiting
+			time.Sleep(5 * time.Second)
+		}
 
 		// Fetch user achievements
 		achievementResp, err := c.client.GetUserStatsForGame(steamId, game.AppId)
