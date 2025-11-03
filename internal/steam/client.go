@@ -23,20 +23,27 @@ const (
 )
 
 type Client struct {
-	apiKey    string
+	apiKey     string
 	httpClient *http.Client
+	rateLimit  *RateLimitState
 }
 
-func NewClient(apiKey string) *Client {
+func NewClient(apiKey string, rateLimit *RateLimitState) *Client {
 	return &Client{
 		apiKey: apiKey,
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
+		rateLimit: rateLimit,
 	}
 }
 
 func (c *Client) getJSON(url string, params map[string]string, target interface{}) error {
+	// Check rate limiting first
+	if c.rateLimit != nil && c.rateLimit.CheckAndBlock() {
+		return fmt.Errorf("steam API rate limited - backoff period active")
+	}
+
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
@@ -86,17 +93,28 @@ func (c *Client) getJSON(url string, params map[string]string, target interface{
 
 	switch resp.StatusCode {
 	case http.StatusOK:
-		// Continue with JSON parsing
+		// Success - reset rate limit tracking
+		if c.rateLimit != nil {
+			c.rateLimit.RecordSuccess()
+		}
 		logger.Log.Debug("Steam API request successful")
 	case http.StatusTooManyRequests:
 		logger.Log.Error("Steam API rate limit exceeded (429)")
+		if c.rateLimit != nil {
+			c.rateLimit.Record403() // Treat 429 same as 403 for rate limiting
+		}
 		return fmt.Errorf("rate limited by Steam API (429)")
 	case http.StatusUnauthorized:
 		logger.Log.Error("Steam API unauthorized (401) - check API key")
 		return fmt.Errorf("unauthorized (401) - check your Steam API key")
 	case http.StatusForbidden:
-		logger.Log.Error("Steam API forbidden (403) - check API key and permissions")
-		return fmt.Errorf("forbidden (403) - check your Steam API key and permissions")
+		// 403 can mean rate limiting OR legitimate "no access" (like games with no achievements)
+		// We need to be aggressive and treat it as rate limiting to avoid permanent ban
+		if c.rateLimit != nil {
+			c.rateLimit.Record403()
+		}
+		logger.Log.Error("Steam API forbidden (403) - treating as rate limit, backing off aggressively")
+		return fmt.Errorf("forbidden (403) - Steam API rate limit detected, backing off")
 	case http.StatusBadRequest:
 		logger.Log.WithFields(logrus.Fields{
 			"status_code": resp.StatusCode,
