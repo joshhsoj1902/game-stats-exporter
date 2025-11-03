@@ -1,12 +1,13 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/joshhsoj1902/game-stats-exporter/internal/logger"
-	"strings"
 	"github.com/sirupsen/logrus"
 )
 
@@ -146,19 +147,23 @@ func (h *Handlers) HandleOSRSMetrics(w http.ResponseWriter, r *http.Request) {
 	}).Info("OSRS metrics request received")
 
 	switch mode {
-	case "vanilla":
-		// Collect player stats for vanilla mode
+	case "vanilla", "gridmaster":
+		// Collect player stats for vanilla or gridmaster mode
 		if playerid == "" {
-			logger.Log.Error("OSRS vanilla metrics request missing playerid parameter")
-			http.Error(w, "playerid is required for vanilla mode", http.StatusBadRequest)
+			logger.Log.WithField("mode", mode).Error("OSRS metrics request missing playerid parameter")
+			http.Error(w, fmt.Sprintf("playerid is required for %s mode", mode), http.StatusBadRequest)
 			return
 		}
 
-		logger.Log.WithField("playerid", playerid).Info("Collecting OSRS vanilla player metrics")
+		logger.Log.WithFields(logrus.Fields{
+			"playerid": playerid,
+			"mode":     mode,
+		}).Info("Collecting OSRS player metrics")
 		err := h.osrsCollector.CollectPlayerStats(playerid, mode)
 		if err != nil {
 			logger.Log.WithFields(logrus.Fields{
 				"playerid": playerid,
+				"mode":     mode,
 				"error":    err.Error(),
 				"duration": time.Since(start),
 			}).Error("Failed to collect OSRS player metrics")
@@ -168,12 +173,13 @@ func (h *Handlers) HandleOSRSMetrics(w http.ResponseWriter, r *http.Request) {
 
 		logger.Log.WithFields(logrus.Fields{
 			"playerid": playerid,
+			"mode":     mode,
 			"duration": time.Since(start),
-		}).Info("OSRS vanilla player metrics collection completed successfully")
+		}).Info("OSRS player metrics collection completed successfully")
 
 	default:
 		logger.Log.WithField("mode", mode).Error("Unknown OSRS mode")
-		http.Error(w, "Unknown mode. Supported modes: 'vanilla' (use /metrics/osrs/worlds for world data)", http.StatusBadRequest)
+		http.Error(w, "Unknown mode. Supported modes: 'vanilla', 'gridmaster' (use /metrics/osrs/worlds for world data)", http.StatusBadRequest)
 		return
 	}
 
@@ -194,6 +200,7 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 		<li><a href="/metrics">/metrics</a> - System metrics only (Go runtime, process, etc.)</li>
 		<li><a href="/metrics/steam/{steam_id}">/metrics/steam/{steam_id}</a> - Steam player metrics (filtered, Steam only)</li>
 		<li><a href="/metrics/osrs/vanilla/{playerid}">/metrics/osrs/vanilla/{playerid}</a> - OSRS vanilla player metrics (filtered, OSRS only)</li>
+		<li><a href="/metrics/osrs/gridmaster/{playerid}">/metrics/osrs/gridmaster/{playerid}</a> - OSRS gridmaster (tournament) player metrics (filtered, OSRS only)</li>
 		<li><a href="/metrics/osrs/worlds">/metrics/osrs/worlds</a> - OSRS world metrics (filtered, OSRS only)</li>
 	</ul>
 </body>

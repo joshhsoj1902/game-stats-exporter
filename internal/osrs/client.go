@@ -18,6 +18,8 @@ import (
 const (
 	PlayerStatsURL      = "https://oldschool.runescape.wiki/cors/m=hiscore_oldschool/index_lite.ws"
 	PlayerStatsHTMLURL  = "https://secure.runescape.com/m=hiscore_oldschool/hiscorepersonal"
+	TournamentStatsURL  = "https://oldschool.runescape.wiki/cors/m=hiscore_oldschool_tournament/index_lite.ws"
+	TournamentHTMLURL   = "https://secure.runescape.com/m=hiscore_oldschool_tournament/hiscorepersonal"
 	WorldDataURL        = "https://www.runescape.com/g=oldscape/slr.ws?order=LPWM"
 )
 
@@ -95,8 +97,15 @@ var knownMinigameNames = []string{
 
 // getMinigameNames fetches and parses minigame names from the HTML highscores page
 // Falls back to known list if HTML fetch fails or doesn't return enough names
-func getMinigameNames(rsn string) ([]string, error) {
-	url := fmt.Sprintf("%s?user1=%s", PlayerStatsHTMLURL, rsn)
+func getMinigameNames(rsn string, mode string) ([]string, error) {
+	var htmlURL string
+	switch mode {
+	case "gridmaster":
+		htmlURL = TournamentHTMLURL
+	default:
+		htmlURL = PlayerStatsHTMLURL
+	}
+	url := fmt.Sprintf("%s?user1=%s", htmlURL, rsn)
 
 	resp, err := http.Get(url)
 	if err != nil {
@@ -186,8 +195,15 @@ func NewClient() *Client {
 }
 
 // GetPlayerStats retrieves player stats from the OSRS hiscores API
-func (c *Client) GetPlayerStats(rsn string) ([]SkillInfo, []MinigameInfo, error) {
-	url := fmt.Sprintf("%s?player=%s", PlayerStatsURL, rsn)
+func (c *Client) GetPlayerStats(rsn string, mode string) ([]SkillInfo, []MinigameInfo, error) {
+	var statsURL string
+	switch mode {
+	case "gridmaster":
+		statsURL = TournamentStatsURL
+	default:
+		statsURL = PlayerStatsURL
+	}
+	url := fmt.Sprintf("%s?player=%s", statsURL, rsn)
 
 	resp, err := c.httpClient.Get(url)
 	if err != nil {
@@ -205,7 +221,7 @@ func (c *Client) GetPlayerStats(rsn string) ([]SkillInfo, []MinigameInfo, error)
 	}
 
 	// Fetch minigame names from HTML page
-	minigameNames, err := getMinigameNames(rsn)
+	minigameNames, err := getMinigameNames(rsn, mode)
 	if err != nil {
 		logger.Log.WithFields(logrus.Fields{
 			"rsn":   rsn,

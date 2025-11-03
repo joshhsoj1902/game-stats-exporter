@@ -33,7 +33,7 @@ func (c *Collector) CollectPlayerStats(rsn string, mode string) error {
 	// Check cache first
 	var stats []SkillInfo
 	var minigames []MinigameInfo
-	cacheKey := fmt.Sprintf("osrs:player_stats:%s", rsn)
+	cacheKey := fmt.Sprintf("osrs:player_stats:%s:%s", mode, rsn)
 	if cachedData, exists := c.cache.Get(cacheKey); exists {
 		type cacheEntry struct {
 			Stats     []SkillInfo    `json:"stats"`
@@ -64,7 +64,7 @@ func (c *Collector) CollectPlayerStats(rsn string, mode string) error {
 			"cache": "miss",
 		}).Info("Fetching player stats from API")
 
-		freshStats, freshMinigames, err := c.client.GetPlayerStats(rsn)
+		freshStats, freshMinigames, err := c.client.GetPlayerStats(rsn, mode)
 		if err != nil {
 			logger.Log.WithFields(logrus.Fields{
 				"rsn":   rsn,
@@ -167,15 +167,15 @@ func (c *Collector) CollectWorldData() error {
 }
 
 // IsActive detects if a player is actively playing by checking XP increases
-func (c *Collector) IsActive(rsn string) (bool, error) {
+func (c *Collector) IsActive(rsn string, mode string) (bool, error) {
 	// Get current stats
-	stats, _, err := c.client.GetPlayerStats(rsn)
+	stats, _, err := c.client.GetPlayerStats(rsn, mode)
 	if err != nil {
 		return false, err
 	}
 
 	// Get last known XP values from cache
-	cacheKey := fmt.Sprintf("osrs:last_xp:%s", rsn)
+	cacheKey := fmt.Sprintf("osrs:last_xp:%s:%s", mode, rsn)
 	lastXP := make(map[string]int64)
 	if cachedData, exists := c.cache.Get(cacheKey); exists {
 		if err := json.Unmarshal(cachedData, &lastXP); err != nil {

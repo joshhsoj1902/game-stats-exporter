@@ -15,7 +15,7 @@ type SteamCollector interface {
 type OSRSCollector interface {
 	CollectPlayerStats(rsn string, mode string) error
 	CollectWorldData() error
-	IsActive(rsn string) (bool, error)
+	IsActive(rsn string, mode string) (bool, error)
 }
 
 type Manager struct {
@@ -167,8 +167,8 @@ func (m *Manager) pollOSRSPlayer(rsn string) {
 				fmt.Printf("Error collecting OSRS data for %s: %v\n", rsn, err)
 			}
 
-			// Check if player is active
-			active, err := m.osrsCollector.IsActive(rsn)
+			// Check if player is active (using "vanilla" mode for background polling)
+			active, err := m.osrsCollector.IsActive(rsn, "vanilla")
 			if err != nil {
 				fmt.Printf("Error checking OSRS activity for %s: %v\n", rsn, err)
 			} else {
