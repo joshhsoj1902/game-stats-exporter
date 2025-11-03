@@ -22,6 +22,7 @@ type SteamCollector interface {
 
 type OSRSCollector interface {
 	CollectPlayerStats(rsn string, mode string) error
+	CollectAllModes(rsn string) map[string]error
 	CollectWorldData() error
 }
 
@@ -147,6 +148,38 @@ func (h *Handlers) HandleOSRSMetrics(w http.ResponseWriter, r *http.Request) {
 	}).Info("OSRS metrics request received")
 
 	switch mode {
+	case "all":
+		// Collect player stats for all supported modes
+		if playerid == "" {
+			logger.Log.WithField("mode", mode).Error("OSRS metrics request missing playerid parameter")
+			http.Error(w, "playerid is required for all mode", http.StatusBadRequest)
+			return
+		}
+
+		logger.Log.WithFields(logrus.Fields{
+			"playerid": playerid,
+			"mode":     mode,
+		}).Info("Collecting OSRS player metrics for all modes")
+
+		errors := h.osrsCollector.CollectAllModes(playerid)
+
+		// Log any errors but don't fail the request - we want to return partial results
+		if len(errors) > 0 {
+			logger.Log.WithFields(logrus.Fields{
+				"playerid":     playerid,
+				"errors_count": len(errors),
+				"errors":       errors,
+			}).Warn("Some modes failed to collect, but returning available metrics")
+		}
+
+		// Even if some modes failed, we still serve metrics for the modes that succeeded
+		logger.Log.WithFields(logrus.Fields{
+			"playerid": playerid,
+			"mode":     mode,
+			"duration": time.Since(start),
+			"errors":   len(errors),
+		}).Info("OSRS player metrics collection for all modes completed")
+
 	case "vanilla", "gridmaster":
 		// Collect player stats for vanilla or gridmaster mode
 		if playerid == "" {
@@ -179,7 +212,7 @@ func (h *Handlers) HandleOSRSMetrics(w http.ResponseWriter, r *http.Request) {
 
 	default:
 		logger.Log.WithField("mode", mode).Error("Unknown OSRS mode")
-		http.Error(w, "Unknown mode. Supported modes: 'vanilla', 'gridmaster' (use /metrics/osrs/worlds for world data)", http.StatusBadRequest)
+		http.Error(w, "Unknown mode. Supported modes: 'vanilla', 'gridmaster', 'all' (use /metrics/osrs/worlds for world data)", http.StatusBadRequest)
 		return
 	}
 
@@ -201,6 +234,7 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 		<li><a href="/metrics/steam/{steam_id}">/metrics/steam/{steam_id}</a> - Steam player metrics (filtered, Steam only)</li>
 		<li><a href="/metrics/osrs/vanilla/{playerid}">/metrics/osrs/vanilla/{playerid}</a> - OSRS vanilla player metrics (filtered, OSRS only)</li>
 		<li><a href="/metrics/osrs/gridmaster/{playerid}">/metrics/osrs/gridmaster/{playerid}</a> - OSRS gridmaster (tournament) player metrics (filtered, OSRS only)</li>
+		<li><a href="/metrics/osrs/all/{playerid}">/metrics/osrs/all/{playerid}</a> - OSRS player metrics for all modes (filtered, OSRS only)</li>
 		<li><a href="/metrics/osrs/worlds">/metrics/osrs/worlds</a> - OSRS world metrics (filtered, OSRS only)</li>
 	</ul>
 </body>

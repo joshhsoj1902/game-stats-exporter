@@ -79,6 +79,39 @@ func ResetPlayerMetrics() {
 	resetPlayerMetrics()
 }
 
+// reportPlayerStatsWithoutReset reports player skill metrics without resetting
+// This is used when accumulating metrics from multiple modes
+func reportPlayerStatsWithoutReset(stats []SkillInfo, mode string) {
+	for _, stat := range stats {
+		level, _ := strconv.ParseFloat(stat.Level, 64)
+		xp, _ := strconv.ParseFloat(stat.XP, 64)
+		// Parse rank as integer to avoid scientific notation (ranks are always whole numbers)
+		rankInt, _ := strconv.ParseInt(stat.Rank, 10, 64)
+		rank := float64(rankInt)
+
+		playerLevelGauge.With(prometheus.Labels{
+			"skill":  stat.Name,
+			"player": stat.Player,
+			"mode":   mode,
+		}).Set(level)
+
+		playerXPGauge.With(prometheus.Labels{
+			"skill":  stat.Name,
+			"player": stat.Player,
+			"mode":   mode,
+		}).Set(xp)
+
+		// Only report rank if it's valid (not -1, which means unranked)
+		if rankInt >= 0 {
+			playerRankGauge.With(prometheus.Labels{
+				"skill":  stat.Name,
+				"player": stat.Player,
+				"mode":   mode,
+			}).Set(rank)
+		}
+	}
+}
+
 // ReportPlayerStats reports player skill metrics
 func ReportPlayerStats(stats []SkillInfo, mode string) {
 	// Reset all player metrics first to avoid stale data from previous requests
@@ -118,6 +151,35 @@ func ReportPlayerStats(stats []SkillInfo, mode string) {
 // This is the public API, the actual implementation is resetWorldMetrics
 func ResetWorldMetrics() {
 	resetWorldMetrics()
+}
+
+// reportMinigamesWithoutReset reports minigame metrics without resetting
+// This is used when accumulating metrics from multiple modes
+func reportMinigamesWithoutReset(minigames []MinigameInfo, mode string) {
+	for _, minigame := range minigames {
+		// Parse rank as integer to avoid scientific notation
+		rankInt, _ := strconv.ParseInt(minigame.Rank, 10, 64)
+		// Parse score as integer (minigames only increase)
+		scoreInt, _ := strconv.ParseInt(minigame.Score, 10, 64)
+
+		// Only report rank if it's valid (not -1, which means unranked)
+		if rankInt >= 0 {
+			minigameRankGauge.With(prometheus.Labels{
+				"minigame": minigame.Name,
+				"player":   minigame.Player,
+				"mode":     mode,
+			}).Set(float64(rankInt))
+		}
+
+		// Only report score if it's valid (not -1, which means unranked/not played)
+		if scoreInt >= 0 {
+			minigameScoreGauge.With(prometheus.Labels{
+				"minigame": minigame.Name,
+				"player":   minigame.Player,
+				"mode":     mode,
+			}).Set(float64(scoreInt))
+		}
+	}
 }
 
 // ReportMinigames reports minigame metrics (rank and score)

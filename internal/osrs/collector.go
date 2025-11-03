@@ -11,6 +11,9 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// SupportedModes is the list of all OSRS game modes that can be collected
+var SupportedModes = []string{"vanilla", "gridmaster"}
+
 type Collector struct {
 	client *Client
 	cache  *cache.Cache
@@ -109,6 +112,119 @@ func (c *Collector) CollectPlayerStats(rsn string, mode string) error {
 	}).Info("Completed OSRS player stats collection")
 
 	return nil
+}
+
+// CollectAllModes collects player stats from all supported modes
+// Returns a map of mode -> error for any failures, but continues collecting other modes
+// This allows partial results even if some modes fail
+func (c *Collector) CollectAllModes(rsn string) map[string]error {
+	errors := make(map[string]error)
+
+	// Reset world metrics first to ensure they don't leak into player endpoint
+	ResetWorldMetrics()
+
+	// Reset player metrics at the start to ensure clean state
+	ResetPlayerMetrics()
+
+	logger.Log.WithFields(logrus.Fields{
+		"rsn":          rsn,
+		"modes_count":  len(SupportedModes),
+	}).Info("Starting OSRS player stats collection for all modes")
+
+	for _, mode := range SupportedModes {
+		logger.Log.WithFields(logrus.Fields{
+			"rsn":  rsn,
+			"mode": mode,
+		}).Info("Collecting stats for mode")
+
+		// Try to collect stats for this mode
+		// We'll collect the data ourselves and report it without resetting between modes
+		var stats []SkillInfo
+		var minigames []MinigameInfo
+
+		// Check cache first
+		cacheKey := fmt.Sprintf("osrs:player_stats:%s:%s", mode, rsn)
+		if cachedData, exists := c.cache.Get(cacheKey); exists {
+			type cacheEntry struct {
+				Stats     []SkillInfo    `json:"stats"`
+				Minigames []MinigameInfo `json:"minigames"`
+				LastUpdate time.Time     `json:"last_update"`
+			}
+			var entry cacheEntry
+			if err := json.Unmarshal(cachedData, &entry); err == nil {
+				stats = entry.Stats
+				minigames = entry.Minigames
+				logger.Log.WithFields(logrus.Fields{
+					"rsn":    rsn,
+					"mode":   mode,
+					"cache":  "hit",
+				}).Info("Retrieved player stats from cache")
+			}
+		}
+
+		// Fetch fresh data if not cached
+		if stats == nil {
+			logger.Log.WithFields(logrus.Fields{
+				"rsn":   rsn,
+				"mode":  mode,
+				"cache": "miss",
+			}).Info("Fetching player stats from API")
+
+			freshStats, freshMinigames, err := c.client.GetPlayerStats(rsn, mode)
+			if err != nil {
+				logger.Log.WithFields(logrus.Fields{
+					"rsn":   rsn,
+					"mode":  mode,
+					"error": err.Error(),
+				}).Warn("Failed to get player stats from API for mode, continuing with other modes")
+				errors[mode] = err
+				// Continue with other modes - don't fail the entire request
+				continue
+			}
+			stats = freshStats
+			minigames = freshMinigames
+
+			// Cache with default TTL (15 minutes)
+			type cacheEntry struct {
+				Stats     []SkillInfo    `json:"stats"`
+				Minigames []MinigameInfo `json:"minigames"`
+				LastUpdate time.Time     `json:"last_update"`
+			}
+			entry := cacheEntry{
+				Stats:     stats,
+				Minigames: minigames,
+				LastUpdate: time.Now(),
+			}
+			if data, err := json.Marshal(entry); err == nil {
+				c.cache.Set(cacheKey, data, 15*time.Minute)
+				logger.Log.WithFields(logrus.Fields{
+					"rsn":  rsn,
+					"mode": mode,
+					"ttl":  "15m",
+				}).Debug("Cached player stats")
+			}
+		}
+
+		// Report metrics for this mode (without resetting - we already reset at the start)
+		// Use a helper function that doesn't reset
+		reportPlayerStatsWithoutReset(stats, mode)
+		reportMinigamesWithoutReset(minigames, mode)
+
+		logger.Log.WithFields(logrus.Fields{
+			"rsn":            rsn,
+			"mode":            mode,
+			"skills_count":  len(stats),
+			"minigames_count": len(minigames),
+		}).Info("Successfully collected stats for mode")
+	}
+
+	logger.Log.WithFields(logrus.Fields{
+		"rsn":           rsn,
+		"modes_count":   len(SupportedModes),
+		"errors_count":  len(errors),
+	}).Info("Completed OSRS player stats collection for all modes")
+
+	return errors
 }
 
 // CollectWorldData collects and reports world data
