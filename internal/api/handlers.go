@@ -180,7 +180,7 @@ func (h *Handlers) HandleOSRSMetrics(w http.ResponseWriter, r *http.Request) {
 			"errors":   len(errors),
 		}).Info("OSRS player metrics collection for all modes completed")
 
-	case "vanilla", "gridmaster":
+	case "vanilla", "gridmaster", "deadman", "seasonal":
 		// Collect player stats for vanilla or gridmaster mode
 		if playerid == "" {
 			logger.Log.WithField("mode", mode).Error("OSRS metrics request missing playerid parameter")
@@ -212,7 +212,7 @@ func (h *Handlers) HandleOSRSMetrics(w http.ResponseWriter, r *http.Request) {
 
 	default:
 		logger.Log.WithField("mode", mode).Error("Unknown OSRS mode")
-		http.Error(w, "Unknown mode. Supported modes: 'vanilla', 'gridmaster', 'all' (use /metrics/osrs/worlds for world data)", http.StatusBadRequest)
+		http.Error(w, "Unknown mode. Supported modes: 'vanilla', 'gridmaster', 'deadman', 'seasonal', 'all' (use /metrics/osrs/worlds for world data)", http.StatusBadRequest)
 		return
 	}
 
@@ -234,6 +234,8 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 		<li><a href="/metrics/steam/{steam_id}">/metrics/steam/{steam_id}</a> - Steam player metrics (filtered, Steam only)</li>
 		<li><a href="/metrics/osrs/vanilla/{playerid}">/metrics/osrs/vanilla/{playerid}</a> - OSRS vanilla player metrics (filtered, OSRS only)</li>
 		<li><a href="/metrics/osrs/gridmaster/{playerid}">/metrics/osrs/gridmaster/{playerid}</a> - OSRS gridmaster (tournament) player metrics (filtered, OSRS only)</li>
+		<li><a href="/metrics/osrs/deadman/{playerid}">/metrics/osrs/deadman/{playerid}</a> - OSRS deadman mode player metrics (filtered, OSRS only)</li>
+		<li><a href="/metrics/osrs/seasonal/{playerid}">/metrics/osrs/seasonal/{playerid}</a> - OSRS seasonal/leagues player metrics (filtered, OSRS only)</li>
 		<li><a href="/metrics/osrs/all/{playerid}">/metrics/osrs/all/{playerid}</a> - OSRS player metrics for all modes (filtered, OSRS only)</li>
 		<li><a href="/metrics/osrs/worlds">/metrics/osrs/worlds</a> - OSRS world metrics (filtered, OSRS only)</li>
 	</ul>

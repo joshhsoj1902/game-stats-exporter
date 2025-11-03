@@ -12,7 +12,8 @@ import (
 )
 
 // SupportedModes is the list of all OSRS game modes that can be collected
-var SupportedModes = []string{"vanilla", "gridmaster"}
+// These are the modes that have accessible API endpoints via the CORS proxy
+var SupportedModes = []string{"vanilla", "gridmaster", "deadman", "seasonal"}
 
 type Collector struct {
 	client *Client

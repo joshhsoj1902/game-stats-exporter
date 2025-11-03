@@ -20,6 +20,10 @@ const (
 	PlayerStatsHTMLURL  = "https://secure.runescape.com/m=hiscore_oldschool/hiscorepersonal"
 	TournamentStatsURL  = "https://oldschool.runescape.wiki/cors/m=hiscore_oldschool_tournament/index_lite.ws"
 	TournamentHTMLURL   = "https://secure.runescape.com/m=hiscore_oldschool_tournament/hiscorepersonal"
+	DeadmanStatsURL     = "https://oldschool.runescape.wiki/cors/m=hiscore_oldschool_deadman/index_lite.ws"
+	DeadmanHTMLURL      = "https://secure.runescape.com/m=hiscore_oldschool_deadman/hiscorepersonal"
+	SeasonalStatsURL    = "https://oldschool.runescape.wiki/cors/m=hiscore_oldschool_seasonal/index_lite.ws"
+	SeasonalHTMLURL     = "https://secure.runescape.com/m=hiscore_oldschool_seasonal/hiscorepersonal"
 	WorldDataURL        = "https://www.runescape.com/g=oldscape/slr.ws?order=LPWM"
 )
 
@@ -102,6 +106,10 @@ func getMinigameNames(rsn string, mode string) ([]string, error) {
 	switch mode {
 	case "gridmaster":
 		htmlURL = TournamentHTMLURL
+	case "deadman":
+		htmlURL = DeadmanHTMLURL
+	case "seasonal":
+		htmlURL = SeasonalHTMLURL
 	default:
 		htmlURL = PlayerStatsHTMLURL
 	}
@@ -200,6 +208,10 @@ func (c *Client) GetPlayerStats(rsn string, mode string) ([]SkillInfo, []Minigam
 	switch mode {
 	case "gridmaster":
 		statsURL = TournamentStatsURL
+	case "deadman":
+		statsURL = DeadmanStatsURL
+	case "seasonal":
+		statsURL = SeasonalStatsURL
 	default:
 		statsURL = PlayerStatsURL
 	}
