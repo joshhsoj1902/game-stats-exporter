@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"strings"
 	"time"
 
 	"github.com/joshhsoj1902/game-stats-exporter/internal/cache"
@@ -12,14 +13,17 @@ import (
 )
 
 type Collector struct {
-	client *Client
-	cache  *cache.Cache
+	client    *Client
+	cache     *cache.Cache
+	rateLimit *RateLimitState
 }
 
 func NewCollector(apiKey string, cache *cache.Cache) *Collector {
+	rateLimit := NewRateLimitState(cache)
 	return &Collector{
-		client: NewClient(apiKey),
-		cache:  cache,
+		client:    NewClient(apiKey, rateLimit),
+		cache:     cache,
+		rateLimit: rateLimit,
 	}
 }
 
@@ -61,6 +65,15 @@ func (c *Collector) Collect(steamId string) error {
 	for _, game := range ownedGamesResp.Games {
 		ReportOwnedGame(game, steamId, username)
 
+		// Check if we're rate limited before continuing
+		if c.rateLimit != nil && c.rateLimit.CheckAndBlock() {
+			logger.Log.WithFields(logrus.Fields{
+				"steam_id": steamId,
+				"blocked_until": c.rateLimit.BlockedUntil,
+			}).Error("Steam API rate limited - stopping collection early to avoid permanent ban")
+			return fmt.Errorf("steam API rate limited - backoff period active until %v", c.rateLimit.BlockedUntil)
+		}
+
 		// Skip achievement fetching for games with zero playtime
 		if game.PlaytimeForever == 0 {
 			logger.Log.WithFields(logrus.Fields{
@@ -74,7 +87,16 @@ func (c *Collector) Collect(steamId string) error {
 		// Get and report achievements
 		err := c.collectAchievements(steamId, game, username)
 		if err != nil {
-			// Log error but continue with other games
+			// Check if this is a rate limit error - if so, stop processing completely
+			if err.Error() == "steam API rate limited - backoff period active" || 
+			   strings.Contains(err.Error(), "steam API rate limited") {
+				logger.Log.WithFields(logrus.Fields{
+					"steam_id": steamId,
+					"error":    err.Error(),
+				}).Error("Steam API rate limited during achievement collection - stopping immediately")
+				return err
+			}
+			// Log other errors but continue with other games
 			logger.Log.WithFields(logrus.Fields{
 				"steam_id": steamId,
 				"game":     game.Name,
@@ -196,16 +218,13 @@ func (c *Collector) collectAchievements(steamId string, game OwnedGame, username
 		// Fetch global achievements
 		globalResp, err := c.client.GetGlobalAchievementPercentages(game.AppId)
 		if err != nil {
-			// Some games have no achievements (403 error)
-			if err.Error() == "forbidden (403) - check your Steam API key and permissions" {
-				// Cache empty achievements to prevent repeated 403s (7 days + jitter)
-				emptyAchievements := []GlobalAchievement{}
-				if data, err := json.Marshal(emptyAchievements); err == nil {
-					ttl := 7*24*time.Hour + time.Duration(rand.Intn(720))*time.Minute // 7 days + 0-12 hours jitter
-					c.cache.Set(globalCacheKey, data, ttl)
-				}
-				return nil
+			// Check if this is a rate limit error - if so, return early and let the rate limiter handle it
+			if err.Error() == "steam API rate limited - backoff period active" || 
+			   err.Error() == "forbidden (403) - Steam API rate limit detected, backing off" {
+				return fmt.Errorf("steam API rate limited: %w", err)
 			}
+			// Note: We no longer cache "empty achievements" for 403s because 403 now means rate limiting
+			// If a game legitimately has no achievements, it would typically return 200 with empty array
 			return fmt.Errorf("error fetching global achievements: %w", err)
 		}
 		globalAchievements = globalResp.AchievementPercentages.Achievements
